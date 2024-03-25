@@ -15,11 +15,45 @@
 <div class="sidebar-section verified">
   <h3 class="sidebar-section__title">{% trans %}Verified details{% endtrans %}</h3>
   <small><i>These details have been verfied by PyPI</i></small>
+  {% if project.organization %}
+  <h6>Owner</h6>
+    <span class="sidebar-section__maintainer">
+      <a href="/org/pypa/" aria-label="pypa">
+        <span class="sidebar-section__user-gravatar">
+          <img src="{{ request.static_path('warehouse:static/dist/images/blue-sitemap.png') }}" height="43" alt="organization icon" title="organization icon">        </span>
+        <span class="sidebar-section__user-gravatar-text">
+          {{ project.organization.display_name }}
+        </span>
+      </a>
+    </span>
+  {% endif %}
+  {% if maintainers %}
+    <h6>{% trans %}Maintainers{% endtrans %}</h6>
+    {% for maintainer in maintainers %}
+      {% set alt = gettext("Avatar for {username} from gravatar.com").format(username=maintainer.username) %}
+      <span class="sidebar-section__maintainer">
+        <a href="{{ request.route_path('accounts.profile', username=maintainer.username) }}" aria-label="{{ username}}">
+          <span class="sidebar-section__user-gravatar">
+            <img src="{{ gravatar(request, maintainer.email, size=50) }}" height="50" width="50" alt="{{ alt }}" title="{{ alt }}">
+          </span>
+          <span class="sidebar-section__user-gravatar-text">
+            {{ maintainer.username}}
+          </span>
+        </a>
+      </span>
+    {% endfor %}
+  {% endif %}
+</div>
+
+<div class="sidebar-section verified">
+  <h3 class="sidebar-section__title">{% trans %}Unverified details{% endtrans %}</h3>
+  <small><i>These details have <b>not</b> been verfied by PyPI</i></small>
+
   <h6>Project links</h6>
   <ul class="vertical-tabs__list">
     <li>
       <a class="vertical-tabs__tab vertical-tabs__tab--with-icon vertical-tabs__tab--condensed" href="{{ url }}" rel="nofollow">
-        {{ url_icon("github.com", "github.com") }}Source <i class="fa fa-circle-check check"></i>
+        {{ url_icon("github.com", "github.com") }}Source
       </a>
     </li>
   </ul>
@@ -28,7 +62,7 @@
   <ul class="vertical-tabs__list">
     <li>
       <a class="vertical-tabs__tab vertical-tabs__tab--with-icon vertical-tabs__tab--condensed" href="{{ url }}" rel="nofollow">
-      Maintainer email <i class="fa fa-circle-check check"></i>
+      Maintainer email
       </a>
     </li>
   </ul>
@@ -72,42 +106,6 @@
     </ul>
   </div>
   {% endif %}
-
-  <h6>Owner</h6>
-    <span class="sidebar-section__maintainer">
-      <a href="/org/pypa/" aria-label="pypa">
-        <span class="sidebar-section__user-gravatar">
-          <img src="https://pypi.org/static/images/blue-sitemap.028cde9a.webp" height="43" alt="organization icon" title="organization icon">
-        </span>
-        <span class="sidebar-section__user-gravatar-text">
-          Python Packaging Authority
-        </span>
-      </a>
-    </span>
-
-  {% if maintainers %}
-    <h6>{% trans %}Maintainers{% endtrans %}</h6>
-    {% for maintainer in maintainers %}
-      {% set alt = gettext("Avatar for {username} from gravatar.com").format(username=maintainer.username) %}
-      <span class="sidebar-section__maintainer">
-        <a href="{{ request.route_path('accounts.profile', username=maintainer.username) }}" aria-label="{{ username}}">
-          <span class="sidebar-section__user-gravatar">
-            <img src="https://secure.gravatar.com/avatar/foo" height="50" width="50" alt="{{ alt }}" title="{{ alt }}">
-          </span>
-          <span class="sidebar-section__user-gravatar-text">
-            {{ "sampleuser"}}
-          </span>
-        </a>
-      </span>
-    {% endfor %}
-  {% endif %}
-
-</div>
-
-
-<div class="sidebar-section verified">
-  <h3 class="sidebar-section__title">{% trans %}Unverified details{% endtrans %}</h3>
-  <small><i>These details have <b>not</b> been verfied by PyPI</i></small>
 
 {% if release.urls.values() | contains_valid_uris %}
   <h6>Project links</h6>
