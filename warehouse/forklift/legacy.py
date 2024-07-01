@@ -47,7 +47,6 @@ from warehouse.authnz import Permissions
 from warehouse.classifiers.models import Classifier
 from warehouse.email import (
     send_api_token_used_in_trusted_publisher_project_email,
-    send_gpg_signature_uploaded_email,
     send_two_factor_not_yet_enabled_email,
 )
 from warehouse.events.tags import EventTag
@@ -452,7 +451,8 @@ def file_upload(request):
         raise _exc_with_message(HTTPBadRequest, "Unknown protocol version.")
 
     # Check if any fields were supplied as a tuple and have become a
-    # FieldStorage. The 'content' field _should_ be a FieldStorage, however.
+    # FieldStorage. The 'content' field _should_ be a FieldStorage, however,
+    # and we don't care about the legacy gpg_signature field.
     # ref: https://github.com/pypi/warehouse/issues/2185
     # ref: https://github.com/pypi/warehouse/issues/2491
     for field in set(request.POST) - {"content", "gpg_signature"}:
@@ -676,6 +676,22 @@ def file_upload(request):
                 ),
             ) from None
 
+    # Verify any verifiable URLs
+    publisher_base_url = (
+        request.oidc_publisher.publisher_base_url if request.oidc_publisher else None
+    )
+    project_urls = (
+        {}
+        if not meta.project_urls
+        else {
+            name: {
+                "url": url,
+                "verified": publisher_base_url
+                and url.lower().startswith(publisher_base_url.lower()),
+            }
+            for name, url in meta.project_urls.items()
+        }
+    )
     try:
         canonical_version = packaging.utils.canonicalize_version(meta.version)
         release = (
@@ -730,7 +746,7 @@ def file_upload(request):
                 html=rendered or "",
                 rendered_by=readme.renderer_version(),
             ),
-            project_urls=meta.project_urls or {},
+            project_urls=project_urls,
             # TODO: Fix this, we currently treat platform as if it is a single
             #       use field, but in reality it is a multi-use field, which the
             #       packaging.metadata library handles correctly.
@@ -768,17 +784,6 @@ def file_upload(request):
             uploaded_via=request.user_agent,
         )
         request.db.add(release)
-
-        if "gpg_signature" in request.POST:
-            warnings.append(
-                "GPG signature support has been removed from PyPI and the "
-                "provided signature has been discarded."
-            )
-            send_gpg_signature_uploaded_email(
-                request,
-                request.user if request.user else project.users,
-                project_name=project.name,
-            )
 
         # TODO: This should be handled by some sort of database trigger or
         #       a SQLAlchemy hook or the like instead of doing it inline in

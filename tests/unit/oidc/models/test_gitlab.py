@@ -80,6 +80,7 @@ class TestGitLabPublisher:
             "project_visibility",
             "jti",
             "user_access_level",
+            "groups_direct",
         }
 
     def test_gitlab_publisher_computed_properties(self):
@@ -94,6 +95,7 @@ class TestGitLabPublisher:
             assert getattr(publisher, claim_name) is not None
 
         assert str(publisher) == "subfolder/fakeworkflow.yml"
+        assert publisher.publisher_base_url == "https://gitlab.com/fakeowner/fakerepo"
         assert publisher.publisher_url() == "https://gitlab.com/fakeowner/fakerepo"
         assert (
             publisher.publisher_url({"sha": "somesha"})

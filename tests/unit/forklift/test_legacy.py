@@ -30,7 +30,7 @@ from sqlalchemy.orm import joinedload
 from trove_classifiers import classifiers
 from webob.multidict import MultiDict
 
-from warehouse.accounts.utils import UserTokenContext
+from warehouse.accounts.utils import UserContext
 from warehouse.admin.flags import AdminFlag, AdminFlagValue
 from warehouse.classifiers.models import Classifier
 from warehouse.forklift import legacy, metadata
@@ -48,6 +48,7 @@ from warehouse.packaging.models import (
     Project,
     ProjectMacaroonWarningAssociation,
     Release,
+    ReleaseURL,
     Role,
 )
 from warehouse.packaging.tasks import sync_file_to_cache, update_bigquery_release_files
@@ -968,7 +969,7 @@ class TestFileUpload:
 
         assert "\x00" not in db_request.POST["summary"]
 
-    @pytest.mark.parametrize("token_context", [True, False])
+    @pytest.mark.parametrize("macaroon_in_user_context", [True, False])
     @pytest.mark.parametrize(
         ("digests",),
         [
@@ -997,7 +998,7 @@ class TestFileUpload:
         pyramid_config,
         db_request,
         digests,
-        token_context,
+        macaroon_in_user_context,
         metrics,
     ):
         monkeypatch.setattr(tempfile, "tempdir", str(tmpdir))
@@ -1013,11 +1014,10 @@ class TestFileUpload:
         filename = f"{project.name}-{release.version}.tar.gz"
 
         db_request.user = user
-        if token_context:
-            user_context = UserTokenContext(user, pretend.stub())
-            pyramid_config.testing_securitypolicy(identity=user_context)
-        else:
-            pyramid_config.testing_securitypolicy(identity=user)
+        user_context = UserContext(
+            user, pretend.stub() if macaroon_in_user_context else None
+        )
+        pyramid_config.testing_securitypolicy(identity=user_context)
 
         db_request.user_agent = "warehouse-tests/6.6.6"
 
@@ -3294,6 +3294,75 @@ class TestFileUpload:
         ]
 
     @pytest.mark.parametrize(
+        "url, expected",
+        [
+            ("https://xpto.com", False),  # Totally different
+            ("https://github.com/foo", False),  # Missing parts
+            ("https://github.com/foo/bar/", True),  # Exactly the same
+            ("https://github.com/foo/bar/readme.md", True),  # Additonal parts
+            ("https://github.com/foo/bar", True),  # Missing trailing slash
+        ],
+    )
+    def test_release_url_verified(
+        self, monkeypatch, pyramid_config, db_request, metrics, url, expected
+    ):
+        project = ProjectFactory.create()
+        publisher = GitHubPublisherFactory.create(projects=[project])
+        publisher.repository_owner = "foo"
+        publisher.repository_name = "bar"
+        claims = {"sha": "somesha"}
+        identity = PublisherTokenContext(publisher, SignedClaims(claims))
+        db_request.oidc_publisher = identity.publisher
+        db_request.oidc_claims = identity.claims
+
+        db_request.db.add(Classifier(classifier="Environment :: Other Environment"))
+        db_request.db.add(Classifier(classifier="Programming Language :: Python"))
+
+        filename = "{}-{}.tar.gz".format(project.name, "1.0")
+
+        pyramid_config.testing_securitypolicy(identity=identity)
+        db_request.user_agent = "warehouse-tests/6.6.6"
+        db_request.POST = MultiDict(
+            {
+                "metadata_version": "1.2",
+                "name": project.name,
+                "version": "1.0",
+                "summary": "This is my summary!",
+                "filetype": "sdist",
+                "md5_digest": _TAR_GZ_PKG_MD5,
+                "content": pretend.stub(
+                    filename=filename,
+                    file=io.BytesIO(_TAR_GZ_PKG_TESTDATA),
+                    type="application/tar",
+                ),
+            }
+        )
+        db_request.POST.extend(
+            [
+                ("classifiers", "Environment :: Other Environment"),
+                ("classifiers", "Programming Language :: Python"),
+                ("requires_dist", "foo"),
+                ("requires_dist", "bar (>1.0)"),
+                ("project_urls", f"Test, {url}"),
+                ("requires_external", "Cheese (>1.0)"),
+                ("provides", "testing"),
+            ]
+        )
+
+        storage_service = pretend.stub(store=lambda path, filepath, meta: None)
+        db_request.find_service = lambda svc, name=None, context=None: {
+            IFileStorage: storage_service,
+            IMetricsService: metrics,
+        }.get(svc)
+
+        legacy.file_upload(db_request)
+        release_url = (
+            db_request.db.query(ReleaseURL).filter(Release.project == project).one()
+        )
+        assert release_url is not None
+        assert release_url.verified == expected
+
+    @pytest.mark.parametrize(
         "version, expected_version",
         [
             ("1.0", "1.0"),
@@ -3695,7 +3764,7 @@ class TestFileUpload:
             ("example", "1.0", "add source file example-1.0.tar.gz", user),
         ]
 
-    def test_upload_succeeds_with_signature(
+    def test_upload_succeeds_with_gpg_signature_field(
         self, pyramid_config, db_request, metrics, project_service, monkeypatch
     ):
         user = UserFactory.create()
@@ -3729,20 +3798,9 @@ class TestFileUpload:
         }.get(svc)
         db_request.user_agent = "warehouse-tests/6.6.6"
 
-        send_email = pretend.call_recorder(lambda *a, **kw: None)
-        monkeypatch.setattr(legacy, "send_gpg_signature_uploaded_email", send_email)
-
         resp = legacy.file_upload(db_request)
 
         assert resp.status_code == 200
-        assert resp.body == (
-            b"GPG signature support has been removed from PyPI and the provided "
-            b"signature has been discarded."
-        )
-
-        assert send_email.calls == [
-            pretend.call(db_request, user, project_name="example"),
-        ]
 
     def test_upload_succeeds_without_two_factor(
         self, pyramid_config, db_request, metrics, project_service, monkeypatch
@@ -3988,7 +4046,7 @@ class TestFileUpload:
                 [caveats.RequestUser(user_id=str(maintainer.id))],
                 user_id=maintainer.id,
             )
-            identity = UserTokenContext(maintainer, macaroon)
+            identity = UserContext(maintainer, macaroon)
         else:
             claims = {"sha": "somesha"}
             identity = PublisherTokenContext(publisher, SignedClaims(claims))

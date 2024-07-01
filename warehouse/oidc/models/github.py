@@ -39,7 +39,7 @@ def _check_repository(ground_truth, signed_claim, all_signed_claims):
 def _check_job_workflow_ref(ground_truth, signed_claim, all_signed_claims):
     # We expect a string formatted as follows:
     #   OWNER/REPO/.github/workflows/WORKFLOW.yml@REF
-    # where REF is the value of the `ref` claim.
+    # where REF is the value of either the `ref` or `sha` claims.
 
     # Defensive: GitHub should never give us an empty job_workflow_ref,
     # but we check for one anyways just in case.
@@ -47,6 +47,11 @@ def _check_job_workflow_ref(ground_truth, signed_claim, all_signed_claims):
         raise InvalidPublisherError("The job_workflow_ref claim is empty")
 
     # We need at least one of these to be non-empty
+    # In most cases, the `ref` claim will be present (e.g: "refs/heads/main")
+    # and used in `job_workflow_ref`. However, there are certain cases
+    # (such as creating a GitHub deployment tied to a specific commit SHA), where
+    # a workflow triggered by that deployment will have an empty `ref` claim, and
+    # the `job_workflow_ref` claim will use the `sha` claim instead.
     ref = all_signed_claims.get("ref")
     sha = all_signed_claims.get("sha")
     if not (ref or sha):
@@ -227,8 +232,12 @@ class GitHubPublisherMixin:
     def sub(self):
         return f"repo:{self.repository}"
 
+    @property
+    def publisher_base_url(self):
+        return f"https://github.com/{self.repository}"
+
     def publisher_url(self, claims=None):
-        base = f"https://github.com/{self.repository}"
+        base = self.publisher_base_url
         sha = claims.get("sha") if claims else None
 
         if sha:
